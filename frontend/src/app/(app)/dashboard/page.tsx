@@ -1,24 +1,19 @@
-import { requireUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wallet, TrendingUp, TrendingDown, PiggyBank } from "lucide-react";
 
-export default async function DashboardPage() {
-  const user = await requireUser();
+const kpis = [
+  { label: "Nettovermögen", value: "–", icon: Wallet, hint: "Alle Konten zusammen" },
+  { label: "Einnahmen (MTD)", value: "–", icon: TrendingUp, hint: "Monat bis heute" },
+  { label: "Ausgaben (MTD)", value: "–", icon: TrendingDown, hint: "Monat bis heute" },
+  { label: "Sparquote", value: "–", icon: PiggyBank, hint: "Aktueller Monat" },
+];
 
-  const kpis = [
-    { label: "Nettovermögen", value: "–", icon: Wallet, hint: "Alle Konten zusammen" },
-    { label: "Einnahmen (MTD)", value: "–", icon: TrendingUp, hint: "Monat bis heute" },
-    { label: "Ausgaben (MTD)", value: "–", icon: TrendingDown, hint: "Monat bis heute" },
-    { label: "Sparquote", value: "–", icon: PiggyBank, hint: "Aktueller Monat" },
-  ];
-
+export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Hallo, {user.name} 👋</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Willkommen zurück. Hier ist eine Übersicht deiner Finanzen.
-        </p>
+        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <p className="text-sm text-muted-foreground mt-1">Übersicht deiner Finanzen</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -45,18 +40,17 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Noch keine Buchungen vorhanden. Importiere einen Kontoauszug oder verbinde ein Konto.
+              Noch keine Buchungen. Konten anlegen oder CSV importieren.
             </p>
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Ausgaben nach Kategorie</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Noch keine Daten. Kategorien werden nach dem ersten Import automatisch befüllt.
+              Daten erscheinen nach dem ersten Import.
             </p>
           </CardContent>
         </Card>
