@@ -78,6 +78,39 @@ export const createTransaction = (body: Partial<Transaction>) => req<Transaction
 export const updateTransaction = (id: string, body: Partial<Transaction>) => req<Transaction>(`/api/v1/transactions/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const deleteTransaction = (id: string) => req<void>(`/api/v1/transactions/${id}`, { method: "DELETE" });
 
+// ── Budgets ───────────────────────────────────────────────────────────────────
+export interface BudgetItem {
+  id: string;
+  label: string;
+  kind: "income" | "expense";
+  amount: string;
+  category_id: string | null;
+  position: number;
+}
+
+export interface BudgetResponse {
+  month: string;
+  items: BudgetItem[];
+  actuals: Record<string, string>; // category_id → amount, "income" → total income
+}
+
+export const getBudget = (month: string) =>
+  req<BudgetResponse>(`/api/v1/budgets/${month}`);
+
+export const createBudgetItem = (
+  month: string,
+  body: { label: string; kind: string; amount: number; category_id?: string | null; position?: number }
+) => req<BudgetItem>(`/api/v1/budgets/${month}/items`, { method: "POST", body: JSON.stringify(body) });
+
+export const updateBudgetItem = (
+  month: string,
+  itemId: string,
+  body: Partial<{ label: string; amount: number; category_id: string | null; position: number }>
+) => req<BudgetItem>(`/api/v1/budgets/${month}/items/${itemId}`, { method: "PATCH", body: JSON.stringify(body) });
+
+export const deleteBudgetItem = (month: string, itemId: string) =>
+  req<void>(`/api/v1/budgets/${month}/items/${itemId}`, { method: "DELETE" });
+
 // ── Import ─────────────────────────────────────────────────────────────────────
 export interface PreviewRow {
   booking_date: string;
