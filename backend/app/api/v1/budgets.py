@@ -2,6 +2,7 @@ import uuid
 from decimal import Decimal
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -122,3 +123,76 @@ async def delete_budget_item(month: str, item_id: uuid.UUID, db: AsyncSession = 
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
     await db.delete(item)
     await db.commit()
+
+
+# ── POST /budgets/{month}/copy ────────────────────────────────────────────────
+
+class CopyRequest(BaseModel):
+    months: int  # how many following months to copy into
+
+
+class CopyResponse(BaseModel):
+    copied_to: list[str]   # months that received a copy
+    skipped: list[str]     # months that already had items → left untouched
+
+
+def _next_month(month: str, offset: int) -> str:
+    """Return YYYY-MM shifted by `offset` months."""
+    year, mon = int(month[:4]), int(month[5:7])
+    mon += offset
+    while mon > 12:
+        mon -= 12
+        year += 1
+    return f"{year}-{mon:02d}"
+
+
+@router.post("/{month}/copy", response_model=CopyResponse)
+async def copy_budget(month: str, body: CopyRequest, db: AsyncSession = Depends(get_db)):
+    if body.months < 1 or body.months > 24:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "months must be 1–24")
+
+    # Load source budget (must exist and have items)
+    source_result = await db.execute(
+        select(Budget).where(Budget.month == month).options(selectinload(Budget.items))
+    )
+    source = source_result.scalar_one_or_none()
+    if not source or not source.items:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Source budget has no items to copy")
+
+    copied_to: list[str] = []
+    skipped: list[str] = []
+
+    for offset in range(1, body.months + 1):
+        target_month = _next_month(month, offset)
+
+        # Check if target already has items
+        existing = await db.execute(
+            select(Budget).where(Budget.month == target_month).options(selectinload(Budget.items))
+        )
+        target = existing.scalar_one_or_none()
+
+        if target and target.items:
+            skipped.append(target_month)
+            continue
+
+        # Create budget if missing
+        if not target:
+            target = Budget(month=target_month)
+            db.add(target)
+            await db.flush()  # get target.id
+
+        # Copy items
+        for src_item in source.items:
+            db.add(BudgetItem(
+                budget_id=target.id,
+                label=src_item.label,
+                kind=src_item.kind,
+                amount=src_item.amount,
+                category_id=src_item.category_id,
+                position=src_item.position,
+            ))
+
+        copied_to.append(target_month)
+
+    await db.commit()
+    return CopyResponse(copied_to=copied_to, skipped=skipped)

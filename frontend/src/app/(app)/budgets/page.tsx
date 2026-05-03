@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  getBudget, createBudgetItem, updateBudgetItem, deleteBudgetItem,
+  getBudget, createBudgetItem, updateBudgetItem, deleteBudgetItem, copyBudget,
   getCategories,
   type BudgetItem, type BudgetResponse, type Category,
 } from "@/lib/api";
@@ -87,6 +87,8 @@ export default function BudgetsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyResult, setCopyResult] = useState<string | null>(null);
 
   // ── load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -127,6 +129,26 @@ export default function BudgetsPage() {
     load();
   }
 
+  async function handleCopy(months: number) {
+    setCopyOpen(false);
+    setCopyResult(null);
+    try {
+      const res = await copyBudget(month, months);
+      const parts: string[] = [];
+      if (res.copied_to.length > 0)
+        parts.push(`✓ Kopiert nach: ${res.copied_to.map(fmtMonth).join(", ")}`);
+      if (res.skipped.length > 0)
+        parts.push(`↷ Übersprungen (bereits befüllt): ${res.skipped.map(fmtMonth).join(", ")}`);
+      setCopyResult(parts.join("  ·  "));
+    } catch (e: unknown) {
+      setCopyResult("⚠ " + (e instanceof Error ? e.message : "Fehler beim Kopieren"));
+    }
+  }
+
+  function fmtMonth(m: string) {
+    return new Date(m + "-01").toLocaleDateString("de-DE", { month: "short", year: "numeric" });
+  }
+
   // ── derived ───────────────────────────────────────────────────────────────
 
   const incomeItems = budget?.items.filter((i) => i.kind === "income") ?? [];
@@ -158,13 +180,54 @@ export default function BudgetsPage() {
     <div className="space-y-6 max-w-3xl">
 
       {/* ── Header + Monatsnavigation ── */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Button variant="outline" size="sm" onClick={() => shiftMonth(-1)}>‹</Button>
         <h1 className="text-2xl font-semibold tabular-nums">
           {new Date(month + "-01").toLocaleDateString("de-DE", { month: "long", year: "numeric" })}
         </h1>
         <Button variant="outline" size="sm" onClick={() => shiftMonth(1)}>›</Button>
+
+        {/* Copy-Button */}
+        <div className="relative ml-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setCopyOpen((o) => !o); setCopyResult(null); }}
+            title="Budget auf Folgemonate kopieren"
+          >
+            📋 Kopieren
+          </Button>
+          {copyOpen && (
+            <div className="absolute left-0 top-9 z-10 bg-popover border border-border rounded-lg shadow-lg p-3 min-w-[200px]">
+              <p className="text-xs text-muted-foreground mb-2 font-medium">In die nächsten … kopieren:</p>
+              <div className="flex flex-col gap-1">
+                {[1, 3, 6, 12].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => handleCopy(n)}
+                    className="text-left text-sm px-2 py-1.5 rounded hover:bg-muted transition-colors"
+                  >
+                    {n === 1 ? "1 Monat" : `${n} Monate`}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setCopyOpen(false)}
+                className="mt-2 text-xs text-muted-foreground hover:text-foreground w-full text-center"
+              >
+                Abbrechen
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ── Kopier-Ergebnis ── */}
+      {copyResult && (
+        <p className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded-md">
+          {copyResult}
+        </p>
+      )}
 
       {/* ── Übersichtskarten ── */}
       <div className="grid grid-cols-3 gap-4">
