@@ -1,9 +1,8 @@
 import uuid
 from decimal import Decimal
-from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import extract, func, select
+from sqlalchemy import extract, func, select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,13 +14,12 @@ from app.schemas.budget import BudgetItemCreate, BudgetItemUpdate, BudgetItemRes
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
 
+GLOBAL_KEY = "global"
+
 
 async def _get_or_create_budget(month: str, db: AsyncSession) -> Budget:
-    """Return existing budget for month or create a new empty one."""
     result = await db.execute(
-        select(Budget)
-        .where(Budget.month == month)
-        .options(selectinload(Budget.items))
+        select(Budget).where(Budget.month == month).options(selectinload(Budget.items))
     )
     budget = result.scalar_one_or_none()
     if not budget:
@@ -33,7 +31,9 @@ async def _get_or_create_budget(month: str, db: AsyncSession) -> Budget:
 
 
 async def _compute_actuals(month: str, db: AsyncSession) -> dict[str, Decimal]:
-    """Sum transactions for the given month grouped by category + total income."""
+    """Sum transactions for a YYYY-MM month. Returns {} for 'global' or invalid strings."""
+    if month == GLOBAL_KEY:
+        return {}
     try:
         year, mon = int(month[:4]), int(month[5:7])
     except (ValueError, IndexError):
@@ -52,16 +52,11 @@ async def _compute_actuals(month: str, db: AsyncSession) -> dict[str, Decimal]:
     actuals: dict[str, Decimal] = {}
     income_total = Decimal("0")
 
-    # Fetch income-kind category ids once
-    income_cats = await db.execute(
-        select(Category.id).where(Category.kind == "income")
-    )
+    income_cats = await db.execute(select(Category.id).where(Category.kind == "income"))
     income_cat_ids = {str(r) for (r,) in income_cats.all()}
 
     for cat_id, total in rows:
-        if total is None:
-            continue
-        if cat_id is None:
+        if total is None or cat_id is None:
             continue
         key = str(cat_id)
         val = Decimal(str(total))
@@ -71,6 +66,15 @@ async def _compute_actuals(month: str, db: AsyncSession) -> dict[str, Decimal]:
 
     actuals["income"] = income_total
     return actuals
+
+
+def _shift_month(month: str, offset: int) -> str:
+    year, mon = int(month[:4]), int(month[5:7])
+    mon += offset
+    while mon > 12:
+        mon -= 12
+        year += 1
+    return f"{year}-{mon:02d}"
 
 
 # ── GET /budgets/{month} ──────────────────────────────────────────────────────
@@ -128,22 +132,25 @@ async def delete_budget_item(month: str, item_id: uuid.UUID, db: AsyncSession = 
 # ── POST /budgets/{month}/copy ────────────────────────────────────────────────
 
 class CopyRequest(BaseModel):
-    months: int  # how many following months to copy into
+    months: int           # how many months to fill
+    start_month: str | None = None  # required when source is "global"
 
 
 class CopyResponse(BaseModel):
-    copied_to: list[str]   # months that received a copy
-    skipped: list[str]     # months that already had items → left untouched
+    copied_to: list[str]
+    skipped: list[str]
 
 
-def _next_month(month: str, offset: int) -> str:
-    """Return YYYY-MM shifted by `offset` months."""
-    year, mon = int(month[:4]), int(month[5:7])
-    mon += offset
-    while mon > 12:
-        mon -= 12
-        year += 1
-    return f"{year}-{mon:02d}"
+async def _copy_items(source: Budget, target: Budget, db: AsyncSession) -> None:
+    for src in source.items:
+        db.add(BudgetItem(
+            budget_id=target.id,
+            label=src.label,
+            kind=src.kind,
+            amount=src.amount,
+            category_id=src.category_id,
+            position=src.position,
+        ))
 
 
 @router.post("/{month}/copy", response_model=CopyResponse)
@@ -151,7 +158,16 @@ async def copy_budget(month: str, body: CopyRequest, db: AsyncSession = Depends(
     if body.months < 1 or body.months > 24:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "months must be 1–24")
 
-    # Load source budget (must exist and have items)
+    # For "global", a start_month is required
+    if month == GLOBAL_KEY:
+        if not body.start_month:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "start_month required for global budget")
+        base_month = body.start_month
+        offsets = range(0, body.months)   # start_month inclusive
+    else:
+        base_month = month
+        offsets = range(1, body.months + 1)  # next N months
+
     source_result = await db.execute(
         select(Budget).where(Budget.month == month).options(selectinload(Budget.items))
     )
@@ -162,10 +178,11 @@ async def copy_budget(month: str, body: CopyRequest, db: AsyncSession = Depends(
     copied_to: list[str] = []
     skipped: list[str] = []
 
-    for offset in range(1, body.months + 1):
-        target_month = _next_month(month, offset)
+    for offset in offsets:
+        target_month = _shift_month(base_month, offset) if month != GLOBAL_KEY else _shift_month(base_month, offset)
+        if month == GLOBAL_KEY:
+            target_month = _shift_month(body.start_month, offset)  # type: ignore[arg-type]
 
-        # Check if target already has items
         existing = await db.execute(
             select(Budget).where(Budget.month == target_month).options(selectinload(Budget.items))
         )
@@ -175,24 +192,61 @@ async def copy_budget(month: str, body: CopyRequest, db: AsyncSession = Depends(
             skipped.append(target_month)
             continue
 
-        # Create budget if missing
         if not target:
             target = Budget(month=target_month)
             db.add(target)
-            await db.flush()  # get target.id
+            await db.flush()
 
-        # Copy items
-        for src_item in source.items:
-            db.add(BudgetItem(
-                budget_id=target.id,
-                label=src_item.label,
-                kind=src_item.kind,
-                amount=src_item.amount,
-                category_id=src_item.category_id,
-                position=src_item.position,
-            ))
-
+        await _copy_items(source, target, db)
         copied_to.append(target_month)
 
     await db.commit()
     return CopyResponse(copied_to=copied_to, skipped=skipped)
+
+
+# ── POST /budgets/global/apply/{month} ───────────────────────────────────────
+# Force-overwrites a month with the global budget (replaces existing items)
+
+@router.post("/global/apply/{month}", response_model=BudgetResponse)
+async def apply_global_to_month(month: str, db: AsyncSession = Depends(get_db)):
+    if month == GLOBAL_KEY:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot apply global to itself")
+
+    # Load global
+    global_result = await db.execute(
+        select(Budget).where(Budget.month == GLOBAL_KEY).options(selectinload(Budget.items))
+    )
+    global_budget = global_result.scalar_one_or_none()
+    if not global_budget or not global_budget.items:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Globales Budget hat noch keine Einträge")
+
+    # Get or create target month budget
+    target_result = await db.execute(
+        select(Budget).where(Budget.month == month).options(selectinload(Budget.items))
+    )
+    target = target_result.scalar_one_or_none()
+
+    if target:
+        # Delete existing items
+        await db.execute(sql_delete(BudgetItem).where(BudgetItem.budget_id == target.id))
+        await db.flush()
+    else:
+        target = Budget(month=month)
+        db.add(target)
+        await db.flush()
+
+    # Copy global items to target
+    await _copy_items(global_budget, target, db)
+    await db.commit()
+
+    # Reload with fresh items
+    refreshed = await db.execute(
+        select(Budget).where(Budget.month == month).options(selectinload(Budget.items))
+    )
+    budget = refreshed.scalar_one()
+    actuals = await _compute_actuals(month, db)
+    return BudgetResponse(
+        month=budget.month,
+        items=[BudgetItemResponse.model_validate(i) for i in budget.items],
+        actuals=actuals,
+    )

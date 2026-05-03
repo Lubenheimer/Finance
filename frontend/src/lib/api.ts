@@ -115,11 +115,14 @@ export interface CopyBudgetResponse {
   copied_to: string[];
   skipped: string[];
 }
-export const copyBudget = (month: string, months: number) =>
+export const copyBudget = (month: string, months: number, start_month?: string) =>
   req<CopyBudgetResponse>(`/api/v1/budgets/${month}/copy`, {
     method: "POST",
-    body: JSON.stringify({ months }),
+    body: JSON.stringify({ months, start_month }),
   });
+
+export const applyGlobalToMonth = (month: string) =>
+  req<BudgetResponse>(`/api/v1/budgets/global/apply/${month}`, { method: "POST" });
 
 // ── Import ─────────────────────────────────────────────────────────────────────
 export interface PreviewRow {
