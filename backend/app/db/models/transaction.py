@@ -25,6 +25,7 @@ class Transaction(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_transfer: Mapped[bool] = mapped_column(Boolean, default=False)
     source: Mapped[str] = mapped_column(String(30), default="manual")  # manual|csv:ing|csv:sparkasse|csv:c24
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped["Account"] = relationship("Account", back_populates="transactions")  # noqa: F821

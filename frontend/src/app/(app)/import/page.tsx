@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Upload, CheckCircle, AlertCircle } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Upload, CheckCircle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Account, PreviewResponse, getAccounts, previewImport, confirmImport } from "@/lib/api";
+import {
+  Account, PreviewResponse, ImportBatch,
+  getAccounts, previewImport, confirmImport,
+  getImportHistory, deleteImportBatch,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const PROFILES = [
@@ -29,10 +33,17 @@ export default function ImportPage() {
   const [importedCount, setImportedCount] = useState(0);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [history, setHistory] = useState<ImportBatch[]>([]);
+  const [deletingBatch, setDeletingBatch] = useState<string | null>(null);
+
+  const loadHistory = useCallback(async () => {
+    try { setHistory(await getImportHistory()); } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
     getAccounts().then(a => { setAccounts(a); if (a.length) setAccountId(a[0].id); });
-  }, []);
+    loadHistory();
+  }, [loadHistory]);
 
   async function handlePreview(f: File) {
     setError(null);
@@ -56,6 +67,7 @@ export default function ImportPage() {
       const result = await confirmImport(accountId, profile, preview.rows);
       setImportedCount(result.imported);
       setStep("done");
+      loadHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fehler beim Import");
     } finally {
@@ -68,6 +80,19 @@ export default function ImportPage() {
     setPreview(null);
     setStep("upload");
     setError(null);
+  }
+
+  async function handleDeleteBatch(batch_id: string, count: number) {
+    if (!confirm(`Import mit ${count} Buchungen löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) return;
+    setDeletingBatch(batch_id);
+    try {
+      await deleteImportBatch(batch_id);
+      await loadHistory();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Fehler beim Löschen");
+    } finally {
+      setDeletingBatch(null);
+    }
   }
 
   function onDrop(e: React.DragEvent) {
@@ -199,6 +224,52 @@ export default function ImportPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* ── Import-History ── */}
+      {history.length > 0 && (
+        <div className="space-y-3 pt-2">
+          <h2 className="text-base font-semibold text-muted-foreground">Import-Verlauf</h2>
+          <Card>
+            <CardContent className="p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground text-xs">
+                    <th className="text-left px-4 py-3 font-medium">Datum</th>
+                    <th className="text-left px-4 py-3 font-medium">Bank</th>
+                    <th className="text-left px-4 py-3 font-medium">Konto</th>
+                    <th className="text-right px-4 py-3 font-medium">Buchungen</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((b) => (
+                    <tr key={b.batch_id} className="border-b border-border last:border-0 hover:bg-muted/40 transition-colors">
+                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                        {new Date(b.imported_at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td className="px-4 py-3 font-medium capitalize">{b.profile}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{b.account_name}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{b.count}</td>
+                      <td className="px-4 py-3 text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-red-400 hover:text-red-500 hover:border-red-400 h-7 px-2"
+                          disabled={deletingBatch === b.batch_id}
+                          onClick={() => handleDeleteBatch(b.batch_id, b.count)}
+                        >
+                          <Trash2 size={13} className="mr-1" />
+                          {deletingBatch === b.batch_id ? "Lösche…" : "Import löschen"}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

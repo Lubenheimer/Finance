@@ -144,6 +144,19 @@ export async function previewImport(file: File, account_id: string, profile: str
   return res.json();
 }
 
-export async function confirmImport(account_id: string, profile: string, rows: PreviewRow[]): Promise<{ imported: number }> {
+export async function confirmImport(account_id: string, profile: string, rows: PreviewRow[]): Promise<{ imported: number; batch_id: string | null }> {
   return req("/api/v1/import/confirm", { method: "POST", body: JSON.stringify({ account_id, profile, rows }) });
 }
+
+export interface ImportBatch {
+  batch_id: string;
+  imported_at: string;
+  profile: string;
+  account_id: string;
+  account_name: string;
+  count: number;
+}
+
+export const getImportHistory = () => req<ImportBatch[]>("/api/v1/import/history");
+export const deleteImportBatch = (batch_id: string) =>
+  req<{ deleted: number }>(`/api/v1/import/batch/${batch_id}`, { method: "DELETE" });
