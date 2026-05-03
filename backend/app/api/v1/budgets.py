@@ -212,6 +212,7 @@ async def copy_budget(month: str, body: CopyRequest, db: AsyncSession = Depends(
             await db.flush()
 
         await _copy_items(source, target, db)
+        await db.flush()
         copied_to.append(target_month)
 
     await db.commit()
@@ -251,9 +252,10 @@ async def apply_global_to_month(month: str, db: AsyncSession = Depends(get_db)):
 
     # Copy global items to target
     await _copy_items(global_budget, target, db)
+    await db.flush()
     await db.commit()
+    db.expire_all()  # clear session cache so next query hits DB fresh
 
-    # Reload with fresh items
     refreshed = await db.execute(
         select(Budget).where(Budget.month == month).options(selectinload(Budget.items))
     )
