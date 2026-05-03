@@ -111,6 +111,9 @@ export const updateBudgetItem = (
 export const deleteBudgetItem = (month: string, itemId: string) =>
   req<void>(`/api/v1/budgets/${month}/items/${itemId}`, { method: "DELETE" });
 
+export const deleteBudget = (month: string) =>
+  req<void>(`/api/v1/budgets/${month}`, { method: "DELETE" });
+
 export interface CopyBudgetResponse {
   copied_to: string[];
   skipped: string[];

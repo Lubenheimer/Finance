@@ -129,6 +129,20 @@ async def delete_budget_item(month: str, item_id: uuid.UUID, db: AsyncSession = 
     await db.commit()
 
 
+# ── DELETE /budgets/{month} ───────────────────────────────────────────────────
+
+@router.delete("/{month}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_budget(month: str, db: AsyncSession = Depends(get_db)):
+    if month == GLOBAL_KEY:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Jahresplan kann hierüber nicht gelöscht werden")
+    result = await db.execute(select(Budget).where(Budget.month == month))
+    budget = result.scalar_one_or_none()
+    if not budget:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Budget nicht gefunden")
+    await db.delete(budget)  # cascade deletes items
+    await db.commit()
+
+
 # ── POST /budgets/{month}/copy ────────────────────────────────────────────────
 
 class CopyRequest(BaseModel):

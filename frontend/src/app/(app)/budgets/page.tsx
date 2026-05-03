@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  getBudget, createBudgetItem, updateBudgetItem, deleteBudgetItem,
+  getBudget, createBudgetItem, updateBudgetItem, deleteBudgetItem, deleteBudget,
   copyBudget, applyGlobalToMonth,
   getCategories,
   type BudgetItem, type BudgetResponse, type Category,
@@ -100,6 +100,7 @@ export default function BudgetsPage() {
   const [copyStartMonth, setCopyStartMonth] = useState(toMonth(new Date()));
   const [copyResult, setCopyResult] = useState<string | null>(null);
   const [applyingGlobal, setApplyingGlobal] = useState(false);
+  const [deletingBudget, setDeletingBudget] = useState(false);
 
   const activeMonth = view === "global" ? "global" : month;
 
@@ -161,6 +162,21 @@ export default function BudgetsPage() {
       setCopyResult(parts.join("  ·  ") || "Nichts zu kopieren.");
     } catch (e: unknown) {
       setCopyResult("⚠ " + (e instanceof Error ? e.message : "Fehler beim Kopieren"));
+    }
+  }
+
+  async function handleDeleteBudget() {
+    const label = new Date(month + "-01").toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+    if (!confirm(`Budget für ${label} löschen? Alle Einträge dieses Monats werden entfernt.`)) return;
+    setDeletingBudget(true);
+    try {
+      await deleteBudget(month);
+      setBudget(null);
+      await load();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Fehler beim Löschen");
+    } finally {
+      setDeletingBudget(false);
     }
   }
 
@@ -297,14 +313,18 @@ export default function BudgetsPage() {
 
         {/* Aus Jahresplan übernehmen (nur Monatsansicht) */}
         {!isGlobal && globalBudget && globalBudget.items.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleApplyGlobal}
-            disabled={applyingGlobal}
-            title="Monatsbudget mit Jahresplan überschreiben"
-          >
+          <Button variant="outline" size="sm" onClick={handleApplyGlobal} disabled={applyingGlobal}
+            title="Monatsbudget mit Jahresplan überschreiben">
             {applyingGlobal ? "…" : "↩ Aus Jahresplan"}
+          </Button>
+        )}
+
+        {/* Budget löschen (nur Monatsansicht, nur wenn Einträge vorhanden) */}
+        {!isGlobal && budget && budget.items.length > 0 && (
+          <Button variant="outline" size="sm" onClick={handleDeleteBudget} disabled={deletingBudget}
+            className="text-red-400 hover:text-red-500 hover:border-red-400"
+            title="Gesamtes Monatsbudget löschen">
+            {deletingBudget ? "…" : "🗑 Budget löschen"}
           </Button>
         )}
       </div>
