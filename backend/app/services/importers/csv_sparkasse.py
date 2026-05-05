@@ -1,9 +1,11 @@
 """
 Sparkasse CSV format:
-- Encoding: ISO-8859-1
+- Encoding: ISO-8859-1 (or UTF-8)
 - Separator: semicolon
-- Columns: Auftragskonto;Buchungstag;Valutadatum;Buchungstext;Auftraggeber/Beguenstigter;
-           Kontonummer;BLZ;Betrag;Gläubiger-ID;Mandatsreferenz;Glaeubiger ID;Kundenreferenz;
+- Dates: DD.MM.YYYY or DD.MM.YY (2-digit year)
+- Columns (two known variants):
+    Variant A: Auftraggeber/Beguenstigter, Buchungstext (as purpose)
+    Variant B: Beguenstigter/Zahlungspflichtiger, Verwendungszweck (as purpose)
 """
 import io
 from datetime import date
@@ -12,8 +14,30 @@ import pandas as pd
 from .base import ParsedTransaction
 
 
+def _parse_de_date(raw: str) -> date | None:
+    """Parse DD.MM.YY or DD.MM.YYYY → date. Returns None on failure."""
+    raw = raw.strip()
+    if not raw or raw == "nan":
+        return None
+    if "-" in raw:
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            return None
+    parts = raw.split(".")
+    if len(parts) != 3:
+        return None
+    day, month, year = parts[0], parts[1], parts[2]
+    if len(year) == 2:
+        year = "20" + year
+    try:
+        return date.fromisoformat(f"{year}-{month}-{day}")
+    except ValueError:
+        return None
+
+
 def parse(content: bytes) -> list[ParsedTransaction]:
-    for enc in ("iso-8859-1", "utf-8-sig"):
+    for enc in ("iso-8859-1", "utf-8-sig", "utf-8"):
         try:
             text = content.decode(enc)
             break
@@ -32,19 +56,24 @@ def parse(content: bytes) -> list[ParsedTransaction]:
 
     csv_text = "\n".join(lines[header_idx:])
     df = pd.read_csv(io.StringIO(csv_text), sep=";", dtype=str)
-    df.columns = df.columns.str.strip()
+    df.columns = df.columns.str.strip().str.strip('"')
+
+    # Detect column variants
+    # Counterparty: "Beguenstigter/Zahlungspflichtiger" (newer) or "Auftraggeber/Beguenstigter" (older)
+    counterparty_col = next(
+        (c for c in df.columns if "Beguenstigter" in c or "Auftraggeber" in c),
+        None,
+    )
+    # Purpose: "Verwendungszweck" preferred, fallback "Buchungstext"
+    purpose_col = "Verwendungszweck" if "Verwendungszweck" in df.columns else "Buchungstext"
+    # IBAN: "Kontonummer/IBAN" or "Kontonummer"
+    iban_col = next((c for c in df.columns if "Kontonummer" in c), None)
 
     results = []
     for _, row in df.iterrows():
         booking_raw = str(row.get("Buchungstag", "")).strip()
-        if not booking_raw or booking_raw == "nan":
-            continue
-        try:
-            booking = date.fromisoformat(
-                booking_raw if "-" in booking_raw
-                else f"{booking_raw[6:10]}-{booking_raw[3:5]}-{booking_raw[0:2]}"
-            )
-        except (ValueError, IndexError):
+        booking = _parse_de_date(booking_raw)
+        if booking is None:
             continue
 
         amount_raw = str(row.get("Betrag", "0")).strip().replace(".", "").replace(",", ".")
@@ -53,24 +82,21 @@ def parse(content: bytes) -> list[ParsedTransaction]:
         except InvalidOperation:
             continue
 
-        value_raw = str(row.get("Valutadatum", "")).strip()
-        value_date = None
-        if value_raw and value_raw != "nan":
-            try:
-                value_date = date.fromisoformat(
-                    value_raw if "-" in value_raw
-                    else f"{value_raw[6:10]}-{value_raw[3:5]}-{value_raw[0:2]}"
-                )
-            except (ValueError, IndexError):
-                pass
+        value_date = _parse_de_date(str(row.get("Valutadatum", "")))
 
-        counterparty = str(row.get("Auftraggeber/Beguenstigter", "")).strip()
-        if counterparty == "nan":
-            counterparty = ""
-        iban = str(row.get("Kontonummer", "")).strip()
-        if iban == "nan":
-            iban = ""
-        purpose = str(row.get("Buchungstext", "")).strip()
+        counterparty = ""
+        if counterparty_col:
+            counterparty = str(row.get(counterparty_col, "")).strip()
+            if counterparty == "nan":
+                counterparty = ""
+
+        iban = ""
+        if iban_col:
+            iban = str(row.get(iban_col, "")).strip()
+            if iban == "nan":
+                iban = ""
+
+        purpose = str(row.get(purpose_col, "")).strip()
         if purpose == "nan":
             purpose = ""
 

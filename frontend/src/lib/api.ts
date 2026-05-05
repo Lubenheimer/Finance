@@ -114,6 +114,9 @@ export const deleteBudgetItem = (month: string, itemId: string) =>
 export const deleteBudget = (month: string) =>
   req<void>(`/api/v1/budgets/${month}`, { method: "DELETE" });
 
+export const autoCategorize = () =>
+  req<{ categorized: number; total: number }>("/api/v1/transactions/auto-categorize", { method: "POST" });
+
 export interface CopyBudgetResponse {
   copied_to: string[];
   skipped: string[];
@@ -137,8 +140,9 @@ export interface PreviewRow {
   purpose: string;
   hash: string;
   is_duplicate: boolean;
+  is_soft_duplicate: boolean;
 }
-export interface PreviewResponse { rows: PreviewRow[]; total: number; duplicates: number; new: number; }
+export interface PreviewResponse { rows: PreviewRow[]; total: number; duplicates: number; soft_duplicates: number; new: number; }
 
 export async function previewImport(file: File, account_id: string, profile: string): Promise<PreviewResponse> {
   const fd = new FormData();

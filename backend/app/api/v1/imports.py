@@ -24,12 +24,14 @@ class PreviewRow(BaseModel):
     purpose: str
     hash: str
     is_duplicate: bool
+    is_soft_duplicate: bool = False  # same date+amount+account, different hash
 
 
 class PreviewResponse(BaseModel):
     rows: list[PreviewRow]
     total: int
     duplicates: int
+    soft_duplicates: int
     new: int
 
 
@@ -72,15 +74,39 @@ async def preview_import(
 
     hashes = [p.compute_hash(account_id) for p in parsed]
 
-    existing = set()
+    # ── Exact duplicate check (same hash) ────────────────────────────────────
+    existing_hashes: set[str] = set()
     if hashes:
         result = await db.execute(
             select(Transaction.hash).where(Transaction.hash.in_(hashes))
         )
-        existing = {row[0] for row in result.all()}
+        existing_hashes = {row[0] for row in result.all()}
+
+    # ── Soft duplicate check (same account + date + amount, different hash) ──
+    # Build a set of (booking_date, amount) tuples from the incoming rows
+    date_amount_pairs = {(p.booking_date, p.amount) for p in parsed}
+
+    existing_soft: set[tuple] = set()
+    if date_amount_pairs:
+        from sqlalchemy import tuple_ as sql_tuple
+        soft_result = await db.execute(
+            select(Transaction.booking_date, Transaction.amount)
+            .where(Transaction.account_id == account_id)
+            .where(
+                sql_tuple(Transaction.booking_date, Transaction.amount).in_(
+                    list(date_amount_pairs)
+                )
+            )
+        )
+        existing_soft = {(row.booking_date, row.amount) for row in soft_result.all()}
 
     rows = []
     for p, h in zip(parsed, hashes):
+        is_dup = h in existing_hashes
+        is_soft = (
+            not is_dup
+            and (p.booking_date, p.amount) in existing_soft
+        )
         rows.append(PreviewRow(
             booking_date=p.booking_date,
             value_date=p.value_date,
@@ -89,11 +115,20 @@ async def preview_import(
             counterparty=p.counterparty,
             purpose=p.purpose,
             hash=h,
-            is_duplicate=h in existing,
+            is_duplicate=is_dup,
+            is_soft_duplicate=is_soft,
         ))
 
+    exact_dup_count = sum(1 for r in rows if r.is_duplicate)
+    soft_dup_count = sum(1 for r in rows if r.is_soft_duplicate)
     new_count = sum(1 for r in rows if not r.is_duplicate)
-    return PreviewResponse(rows=rows, total=len(rows), duplicates=len(rows) - new_count, new=new_count)
+    return PreviewResponse(
+        rows=rows,
+        total=len(rows),
+        duplicates=exact_dup_count,
+        soft_duplicates=soft_dup_count,
+        new=new_count,
+    )
 
 
 @router.post("/confirm", status_code=status.HTTP_201_CREATED)

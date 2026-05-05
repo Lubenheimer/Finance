@@ -152,7 +152,7 @@ export default function ImportPage() {
 
       {step === "preview" && preview && (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
+          <div className={cn("grid gap-4", preview.soft_duplicates > 0 ? "grid-cols-4" : "grid-cols-3")}>
             <Card><CardContent className="pt-4 text-center">
               <p className="text-2xl font-bold">{preview.total}</p>
               <p className="text-xs text-muted-foreground mt-1">Gesamt</p>
@@ -163,9 +163,25 @@ export default function ImportPage() {
             </CardContent></Card>
             <Card><CardContent className="pt-4 text-center">
               <p className="text-2xl font-bold text-muted-foreground">{preview.duplicates}</p>
-              <p className="text-xs text-muted-foreground mt-1">Duplikate (werden übersprungen)</p>
+              <p className="text-xs text-muted-foreground mt-1">Duplikate (übersprungen)</p>
             </CardContent></Card>
+            {preview.soft_duplicates > 0 && (
+              <Card className="border-amber-500/40 bg-amber-500/5"><CardContent className="pt-4 text-center">
+                <p className="text-2xl font-bold text-amber-400">{preview.soft_duplicates}</p>
+                <p className="text-xs text-muted-foreground mt-1">Mögliche Dubletten</p>
+              </CardContent></Card>
+            )}
           </div>
+
+          {preview.soft_duplicates > 0 && (
+            <div className="flex items-start gap-2 text-sm text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3">
+              <span className="mt-0.5">⚠️</span>
+              <span>
+                <strong>{preview.soft_duplicates} Buchung{preview.soft_duplicates > 1 ? "en haben" : " hat"}</strong> dasselbe Datum und denselben Betrag wie bereits vorhandene Buchungen — aber einen anderen Verwendungszweck.
+                Prüfe ob es sich um echte Duplikate handelt. Sie werden trotzdem importiert, sofern du nicht abbrichst.
+              </span>
+            </div>
+          )}
 
           <Card>
             <CardHeader><CardTitle className="text-base">Vorschau (erste 50 Zeilen)</CardTitle></CardHeader>
@@ -184,15 +200,23 @@ export default function ImportPage() {
                   {preview.rows.slice(0, 50).map((row, i) => {
                     const amount = parseFloat(row.amount);
                     return (
-                      <tr key={i} className={cn("border-b border-border last:border-0", row.is_duplicate && "opacity-40")}>
+                      <tr key={i} className={cn(
+                        "border-b border-border last:border-0",
+                        row.is_duplicate && "opacity-40",
+                        row.is_soft_duplicate && "bg-amber-500/5",
+                      )}>
                         <td className="px-4 py-2 whitespace-nowrap text-muted-foreground">{row.booking_date}</td>
                         <td className="px-4 py-2 max-w-[180px] truncate">{row.counterparty || "–"}</td>
                         <td className="px-4 py-2 max-w-[200px] truncate hidden md:table-cell text-muted-foreground">{row.purpose || "–"}</td>
                         <td className={cn("px-4 py-2 text-right font-medium whitespace-nowrap", amount >= 0 ? "text-green-400" : "text-red-400")}>
                           {amount.toLocaleString("de-DE", { style: "currency", currency: row.currency })}
                         </td>
-                        <td className="px-4 py-2 text-xs text-muted-foreground">
-                          {row.is_duplicate ? "Duplikat" : ""}
+                        <td className="px-4 py-2 text-xs whitespace-nowrap">
+                          {row.is_duplicate
+                            ? <span className="text-muted-foreground">Duplikat</span>
+                            : row.is_soft_duplicate
+                            ? <span className="text-amber-400">⚠ Mögliche Dublette</span>
+                            : null}
                         </td>
                       </tr>
                     );

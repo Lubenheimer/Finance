@@ -4,8 +4,10 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.transaction import Transaction
+from app.db.models.category import Category
 from app.db.session import get_db
 from app.schemas.transaction import TransactionCreate, TransactionResponse, TransactionUpdate
+from app.services.categorizer import auto_categorize
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -85,3 +87,65 @@ async def delete_transaction(tx_id: uuid.UUID, db: AsyncSession = Depends(get_db
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Transaction not found")
     await db.delete(tx)
     await db.commit()
+
+
+# ── POST /transactions/auto-categorize ───────────────────────────────────────
+
+@router.post("/auto-categorize")
+async def auto_categorize_transactions(db: AsyncSession = Depends(get_db)):
+    """
+    Runs AI categorization on all uncategorized transactions.
+    Returns how many were categorized.
+    """
+    # Load uncategorized transactions
+    tx_result = await db.execute(
+        select(Transaction)
+        .where(Transaction.category_id.is_(None))
+        .order_by(Transaction.booking_date.desc())
+        .limit(200)  # safety cap per run
+    )
+    transactions = tx_result.scalars().all()
+
+    if not transactions:
+        return {"categorized": 0, "total": 0}
+
+    # Load all categories with parent info
+    cat_result = await db.execute(
+        select(Category).order_by(Category.kind, Category.name)
+    )
+    all_cats = cat_result.scalars().all()
+
+    # Build parent name lookup
+    cat_by_id = {str(c.id): c for c in all_cats}
+    categories = []
+    for c in all_cats:
+        parent_name = None
+        if c.parent_id and str(c.parent_id) in cat_by_id:
+            parent_name = cat_by_id[str(c.parent_id)].name
+        categories.append({
+            "id": str(c.id),
+            "name": c.name,
+            "kind": c.kind,
+            "parent_name": parent_name,
+        })
+
+    tx_dicts = [
+        {
+            "id": str(t.id),
+            "counterparty": t.counterparty or "",
+            "purpose": t.purpose or "",
+            "amount": str(t.amount),
+        }
+        for t in transactions
+    ]
+
+    mapping = await auto_categorize(tx_dicts, categories)
+
+    # Apply results
+    for tx_id_str, cat_id_str in mapping.items():
+        tx = await db.get(Transaction, uuid.UUID(tx_id_str))
+        if tx:
+            tx.category_id = uuid.UUID(cat_id_str)
+
+    await db.commit()
+    return {"categorized": len(mapping), "total": len(transactions)}

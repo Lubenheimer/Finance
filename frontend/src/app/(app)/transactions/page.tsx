@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Search, Tag } from "lucide-react";
+import { Plus, Search, Tag, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +11,7 @@ import { Dialog } from "@/components/ui/dialog";
 import {
   Account, Category, Transaction,
   getAccounts, getCategories, getTransactions,
-  createTransaction, updateTransaction, deleteTransaction,
+  createTransaction, updateTransaction, deleteTransaction, autoCategorize,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,8 @@ export default function TransactionsPage() {
   const [filterAccount, setFilterAccount] = useState("");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [categorizing, setCategorizing] = useState(false);
+  const [catResult, setCatResult] = useState<{ categorized: number; total: number } | null>(null);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
   const [form, setForm] = useState({
     account_id: "", booking_date: new Date().toISOString().slice(0, 10),
@@ -75,6 +77,20 @@ export default function TransactionsPage() {
     load();
   }
 
+  async function runAutoCategorize() {
+    setCategorizing(true);
+    setCatResult(null);
+    try {
+      const result = await autoCategorize();
+      setCatResult(result);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Fehler bei der Kategorisierung");
+    } finally {
+      setCategorizing(false);
+    }
+  }
+
   async function remove(id: string) {
     if (!confirm("Buchung löschen?")) return;
     await deleteTransaction(id);
@@ -87,8 +103,20 @@ export default function TransactionsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Buchungen</h1>
-        <Button onClick={openCreate} disabled={accounts.length === 0}><Plus size={16} />Buchung anlegen</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={runAutoCategorize} disabled={categorizing}>
+            <Sparkles size={15} className={categorizing ? "animate-pulse" : ""} />
+            {categorizing ? "KI kategorisiert…" : "Auto-kategorisieren"}
+          </Button>
+          <Button onClick={openCreate} disabled={accounts.length === 0}><Plus size={16} />Buchung anlegen</Button>
+        </div>
       </div>
+      {catResult && (
+        <div className="text-sm text-muted-foreground bg-muted/40 rounded-lg px-4 py-2 flex items-center justify-between">
+          <span>✨ {catResult.categorized} von {catResult.total} unkategorisierten Buchungen wurden automatisch zugeordnet.</span>
+          <button onClick={() => setCatResult(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex gap-3 flex-wrap">
