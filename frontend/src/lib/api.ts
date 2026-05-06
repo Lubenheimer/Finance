@@ -130,6 +130,34 @@ export const copyBudget = (month: string, months: number, start_month?: string) 
 export const applyGlobalToMonth = (month: string) =>
   req<BudgetResponse>(`/api/v1/budgets/global/apply/${month}`, { method: "POST" });
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export interface MonthlyStats {
+  month: string;
+  income: number;
+  expenses: number;
+  net: number;
+}
+export interface CategoryStat {
+  category_id: string | null;
+  name: string;
+  icon: string;
+  color: string;
+  amount: number;
+}
+export interface CounterpartyStat {
+  counterparty: string;
+  amount: number;
+}
+
+export const getMonthlyStats = (months = 12) =>
+  req<MonthlyStats[]>(`/api/v1/analytics/monthly?months=${months}`);
+
+export const getCategoryStats = (month: string, kind: "income" | "expense" = "expense") =>
+  req<CategoryStat[]>(`/api/v1/analytics/categories?month=${month}&kind=${kind}`);
+
+export const getTopCounterparties = (month: string, limit = 8) =>
+  req<CounterpartyStat[]>(`/api/v1/analytics/top-counterparties?month=${month}&limit=${limit}`);
+
 // ── Import ─────────────────────────────────────────────────────────────────────
 export interface PreviewRow {
   booking_date: string;
